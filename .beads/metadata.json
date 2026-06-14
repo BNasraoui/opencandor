@@ -1,0 +1,7 @@
+{
+  "database": "dolt",
+  "backend": "dolt",
+  "dolt_mode": "server",
+  "dolt_database": "opencandor",
+  "project_id": "a62f1fd7-db83-479e-ab06-0a4c4be0d6f3"
+}

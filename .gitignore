@@ -1,0 +1,8 @@
+
+# Statesman
+.statesman/
+statesman.local.toml
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
