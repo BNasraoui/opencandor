@@ -5,5 +5,5 @@
     "checkJs": false,
     "noEmit": true
   },
-  "include": ["eslint.config.js", "packages/*/src/**/*.ts", "tests/**/*.mjs"]
+  "include": ["eslint.config.js", "vitest.config.ts", "packages/*/src/**/*.ts", "tests/**/*.ts"]
 }
