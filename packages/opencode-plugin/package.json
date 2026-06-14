@@ -17,5 +17,9 @@
     "build": "tsc -p tsconfig.json",
     "prepack": "pnpm build",
     "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@opencandor/core": "workspace:*",
+    "effect": "^3.21.3"
   }
 }

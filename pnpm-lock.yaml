@@ -42,9 +42,20 @@ importers:
         specifier: ^3.21.3
         version: 3.21.3
 
-  packages/hooks-cli: {}
+  packages/hooks-cli:
+    dependencies:
+      '@opencandor/core':
+        specifier: workspace:*
+        version: link:../core
 
-  packages/opencode-plugin: {}
+  packages/opencode-plugin:
+    dependencies:
+      '@opencandor/core':
+        specifier: workspace:*
+        version: link:../core
+      effect:
+        specifier: ^3.21.3
+        version: 3.21.3
 
 packages:
 
