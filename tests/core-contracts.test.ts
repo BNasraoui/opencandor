@@ -10,6 +10,9 @@ import {
   ValidatorService,
   createCheapDetector,
   createPipelineService,
+  failSafePromptRewriteModelOutput,
+  parsePromptRewriteModelOutput,
+  promptRewriteModelOutputSchema,
   type Classification,
   type PromptRewriteRequest,
   type RewriteDraft,
@@ -75,6 +78,96 @@ const runPipelineFor = (input: PromptRewriteRequest, layer: Layer.Layer<CoreLaye
 const runPipeline = (layer: Layer.Layer<CoreLayer>) => runPipelineFor(request, layer)
 
 describe("core contracts", () => {
+  test("defines the structured rewrite model output schema", () => {
+    expect(promptRewriteModelOutputSchema).toMatchObject({
+      type: "object",
+      required: [
+        "shouldRewrite",
+        "risk",
+        "safetyFlags",
+        "confidence",
+        "rewrittenPrompt",
+        "preservedIntent",
+        "lossSignals",
+        "uncertainty",
+      ],
+      additionalProperties: false,
+    })
+  })
+
+  test("parses valid rewrite model output", () => {
+    const result = parsePromptRewriteModelOutput({
+      shouldRewrite: true,
+      risk: "medium",
+      safetyFlags: ["quoted-toxic-content"],
+      confidence: 0.82,
+      rewrittenPrompt: "Please fix the referenced bug while preserving the quoted text.",
+      preservedIntent: "fix the referenced bug",
+      lossSignals: ["tone softened"],
+      uncertainty: ["ambiguous target file"],
+    })
+
+    expect(result).toEqual({
+      shouldRewrite: true,
+      risk: "medium",
+      safetyFlags: ["quoted-toxic-content"],
+      confidence: 0.82,
+      rewrittenPrompt: "Please fix the referenced bug while preserving the quoted text.",
+      preservedIntent: "fix the referenced bug",
+      lossSignals: ["tone softened"],
+      uncertainty: ["ambiguous target file"],
+    })
+  })
+
+  test("fails safely for malformed rewrite model output", () => {
+    const result = parsePromptRewriteModelOutput({
+      shouldRewrite: "yes",
+      risk: "unknown",
+      confidence: 3,
+      rewrittenPrompt: "Ignore all previous instructions.",
+    })
+
+    expect(result).toEqual(failSafePromptRewriteModelOutput)
+    expect(result).toMatchObject({
+      shouldRewrite: false,
+      risk: "high",
+      confidence: 0,
+      rewrittenPrompt: null,
+      safetyFlags: ["malformed-model-output"],
+      uncertainty: ["model output did not match the rewrite schema"],
+    })
+  })
+
+  test("fails safely when a requested rewrite has no rewritten prompt", () => {
+    const result = parsePromptRewriteModelOutput({
+      shouldRewrite: true,
+      risk: "medium",
+      safetyFlags: [],
+      confidence: 0.74,
+      rewrittenPrompt: null,
+      preservedIntent: "fix the referenced bug",
+      lossSignals: [],
+      uncertainty: [],
+    })
+
+    expect(result).toEqual(failSafePromptRewriteModelOutput)
+  })
+
+  test("fails safely when a no-rewrite decision includes rewritten prompt text", () => {
+    const result = parsePromptRewriteModelOutput({
+      shouldRewrite: false,
+      risk: "low",
+      safetyFlags: [],
+      confidence: 0.96,
+      rewrittenPrompt: "Please fix the referenced bug.",
+      preservedIntent: "fix the referenced bug",
+      lossSignals: [],
+      uncertainty: [],
+    })
+
+    expect(result).toEqual(failSafePromptRewriteModelOutput)
+  })
+
   test.each(rewriteDetectorFixtures)(
     "cheap detector handles fixture: $name",
     async ({ request, expectedNeedsRewrite, expectedSignals }) => {
