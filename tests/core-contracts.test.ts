@@ -8,6 +8,7 @@ import {
   RewriterService,
   SafetyService,
   ValidatorService,
+  createCheapDetector,
   createPipelineService,
   type Classification,
   type PromptRewriteRequest,
@@ -15,6 +16,7 @@ import {
   type SafetyAssessment,
   type ValidationResult,
 } from "../packages/core/src/index.js"
+import { rewriteDetectorFixtures } from "./fixtures/rewrite-detector.fixtures.js"
 
 const request: PromptRewriteRequest = {
   prompt: "fix this garbage",
@@ -73,6 +75,75 @@ const runPipelineFor = (input: PromptRewriteRequest, layer: Layer.Layer<CoreLaye
 const runPipeline = (layer: Layer.Layer<CoreLayer>) => runPipelineFor(request, layer)
 
 describe("core contracts", () => {
+  test.each(rewriteDetectorFixtures)(
+    "cheap detector handles fixture: $name",
+    async ({ request, expectedNeedsRewrite, expectedSignals }) => {
+      const detector = createCheapDetector()
+
+      const result = await Effect.runPromise(detector.detect(request))
+
+      expect(result).toEqual({
+        needsRewrite: expectedNeedsRewrite,
+        signals: expectedSignals,
+      })
+    },
+  )
+
+  test("cheap detector is configurable with additional rewrite signals", async () => {
+    const detector = createCheapDetector({
+      additionalSignalPatterns: [{ signal: "team-convention", pattern: /\bper our convention\b/i }],
+    })
+
+    const configuredSignal = await Effect.runPromise(
+      detector.detect({
+        prompt: "Per our convention, rewrite this before it reaches the model.",
+        host: "opencode",
+        mode: "replace",
+      }),
+    )
+    const defaultSignal = await Effect.runPromise(
+      detector.detect({
+        prompt: "This stupid bug keeps returning.",
+        host: "opencode",
+        mode: "replace",
+      }),
+    )
+
+    expect(configuredSignal).toEqual({ needsRewrite: true, signals: ["team-convention"] })
+    expect(defaultSignal).toEqual({ needsRewrite: true, signals: ["abusive-language"] })
+  })
+
+  test("cheap detector can require multiple signals before triggering", async () => {
+    const detector = createCheapDetector({ minimumSignalCount: 2 })
+
+    const result = await Effect.runPromise(
+      detector.detect({
+        prompt: "This is frustrating, please fix the auth bug.",
+        host: "opencode",
+        mode: "replace",
+      }),
+    )
+
+    expect(result).toEqual({ needsRewrite: false, signals: ["high-friction"] })
+  })
+
+  test("cheap detector handles stateful configured regex patterns deterministically", async () => {
+    const detector = createCheapDetector({
+      signalPatterns: [{ signal: "global-pattern", pattern: /\bstupid\b/gi }],
+    })
+    const input: PromptRewriteRequest = {
+      prompt: "This stupid bug keeps returning.",
+      host: "opencode",
+      mode: "replace",
+    }
+
+    const first = await Effect.runPromise(detector.detect(input))
+    const second = await Effect.runPromise(detector.detect(input))
+
+    expect(first).toEqual({ needsRewrite: true, signals: ["global-pattern"] })
+    expect(second).toEqual(first)
+  })
+
   test("runs a rewrite pipeline using host-supplied Effect services", async () => {
     const result = await runPipeline(defaultLayer)
 

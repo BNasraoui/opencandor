@@ -63,6 +63,17 @@ export interface Detector {
   readonly detect: (request: PromptRewriteRequest) => Effect.Effect<DetectionResult, unknown>
 }
 
+export interface CheapDetectorSignalPattern {
+  readonly signal: string
+  readonly pattern: RegExp
+}
+
+export interface CheapDetectorOptions {
+  readonly signalPatterns?: readonly CheapDetectorSignalPattern[]
+  readonly additionalSignalPatterns?: readonly CheapDetectorSignalPattern[]
+  readonly minimumSignalCount?: number
+}
+
 export interface Classifier {
   readonly classify: (request: PromptRewriteRequest) => Effect.Effect<Classification, unknown>
 }
@@ -130,6 +141,43 @@ export class PipelineService extends Context.Tag("@opencandor/core/PipelineServi
   PipelineService,
   Pipeline
 >() {}
+
+const defaultCheapDetectorSignals: readonly CheapDetectorSignalPattern[] = [
+  { signal: "abusive-language", pattern: /\b(?:idiot|stupid|trash|useless)\b/i },
+  {
+    signal: "high-friction",
+    pattern: /\b(?:angry|frustrated|frustrating|crazy|hate|right now)\b/i,
+  },
+]
+
+const patternMatches = (pattern: RegExp, prompt: string): boolean => {
+  pattern.lastIndex = 0
+  const matches = pattern.test(prompt)
+  pattern.lastIndex = 0
+  return matches
+}
+
+export const createCheapDetector = (options: CheapDetectorOptions = {}): Detector => {
+  const signalPatterns = [
+    ...(options.signalPatterns ?? defaultCheapDetectorSignals),
+    ...(options.additionalSignalPatterns ?? []),
+  ]
+  const minimumSignalCount = options.minimumSignalCount ?? 1
+
+  return {
+    detect: (request) =>
+      Effect.sync(() => {
+        const signals = signalPatterns
+          .filter(({ pattern }) => patternMatches(pattern, request.prompt))
+          .map(({ signal }) => signal)
+
+        return {
+          needsRewrite: signals.length >= minimumSignalCount,
+          signals,
+        } satisfies DetectionResult
+      }),
+  }
+}
 
 export const createPipelineService = (): Pipeline => ({
   rewrite: (request) =>
