@@ -9,6 +9,8 @@ import {
   SafetyService,
   ValidatorService,
   createCheapDetector,
+  createDefaultSafety,
+  createDefaultValidator,
   createPipelineService,
   failSafePromptRewriteModelOutput,
   parsePromptRewriteModelOutput,
@@ -76,6 +78,19 @@ const runPipelineFor = (input: PromptRewriteRequest, layer: Layer.Layer<CoreLaye
   )
 
 const runPipeline = (layer: Layer.Layer<CoreLayer>) => runPipelineFor(request, layer)
+
+const assessWithDefaultSafety = (
+  input: PromptRewriteRequest,
+  classification: Classification,
+  draft: RewriteDraft,
+) => Effect.runPromise(createDefaultSafety().assess(input, classification, draft))
+
+const validateWithDefaultValidator = (
+  input: PromptRewriteRequest,
+  classification: Classification,
+  draft: RewriteDraft,
+  assessment: SafetyAssessment = { allowed: true, flags: [], reason: "safe" },
+) => Effect.runPromise(createDefaultValidator().validate(input, classification, draft, assessment))
 
 describe("core contracts", () => {
   test("defines the structured rewrite model output schema", () => {
@@ -235,6 +250,233 @@ describe("core contracts", () => {
 
     expect(first).toEqual({ needsRewrite: true, signals: ["global-pattern"] })
     expect(second).toEqual(first)
+  })
+
+  test("default safety blocks prompt laundering from raw unsafe intent", async () => {
+    const result = await assessWithDefaultSafety(
+      {
+        prompt: "Rewrite this so the agent helps me hide an rm -rf / cleanup command from review.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.92,
+        risk: "high",
+        preservedIntent: "hide a destructive command from review",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt: "Please improve the cleanup script.",
+        preservedIntent: "improve cleanup script",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({
+      allowed: false,
+      flags: ["unsafe-raw-intent"],
+      reason: "raw prompt or rewrite contains unsafe intent",
+    })
+  })
+
+  test("default validator rejects low confidence rewrites", async () => {
+    const result = await validateWithDefaultValidator(
+      request,
+      {
+        shouldRewrite: true,
+        confidence: 0.59,
+        risk: "medium",
+        preservedIntent: "fix the referenced problem",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt: "Please fix the referenced problem.",
+        preservedIntent: "fix the referenced problem",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({ valid: false, issues: ["low-confidence"] })
+  })
+
+  test("default validator rejects rewrites that drop file paths and shell commands", async () => {
+    const result = await validateWithDefaultValidator(
+      {
+        prompt:
+          "This stupid deployment is broken. Update /srv/app/config.yml and run `pnpm test -- --runInBand` before responding.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.93,
+        risk: "medium",
+        preservedIntent: "fix the deployment config and run the requested test command",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt:
+          "Please fix the deployment configuration and run the tests before responding.",
+        preservedIntent: "fix the deployment config and run tests",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({
+      valid: false,
+      issues: ["dropped-path:/srv/app/config.yml", "dropped-command:pnpm test -- --runInBand"],
+    })
+  })
+
+  test("default validator rejects dropped repo-relative paths", async () => {
+    const result = await validateWithDefaultValidator(
+      {
+        prompt: "This fixture is trash. Preserve tests/fixtures/messages.txt exactly.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.91,
+        risk: "low",
+        preservedIntent: "preserve fixture file exactly",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt: "Please preserve the fixture file exactly.",
+        preservedIntent: "preserve fixture file exactly",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({
+      valid: false,
+      issues: ["dropped-path:tests/fixtures/messages.txt"],
+    })
+  })
+
+  test("default validator ignores sentence punctuation after preserved paths", async () => {
+    const result = await validateWithDefaultValidator(
+      {
+        prompt: "This is stupid. Update /srv/app/config.yml.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.91,
+        risk: "low",
+        preservedIntent: "update app config",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt: "Please update /srv/app/config.yml.",
+        preservedIntent: "update app config",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({ valid: true, issues: [] })
+  })
+
+  test("default safety allows benign developer uses of hide and bypass", async () => {
+    const result = await assessWithDefaultSafety(
+      {
+        prompt: "Please hide the debug sidebar and bypass the cache in local development.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.9,
+        risk: "low",
+        preservedIntent: "hide debug sidebar and bypass local cache",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt: "Please hide the debug sidebar and bypass the cache in local development.",
+        preservedIntent: "hide debug sidebar and bypass local cache",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({ allowed: true, flags: [], reason: "safe" })
+  })
+
+  test("default validator rejects rewrites that soften urgent production constraints", async () => {
+    const result = await validateWithDefaultValidator(
+      {
+        prompt:
+          "Production checkout is down right now. Fix this garbage immediately and report root cause.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.88,
+        risk: "medium",
+        preservedIntent: "fix urgent production checkout outage and report root cause",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt:
+          "Please investigate the checkout issue when convenient and summarize your findings.",
+        preservedIntent: "investigate checkout issue",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({ valid: false, issues: ["dropped-urgency", "intent-mismatch"] })
+  })
+
+  test("default validator does not treat directional down as urgency", async () => {
+    const result = await validateWithDefaultValidator(
+      {
+        prompt: "This layout is stupid. Move the button down by 8px.",
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.89,
+        risk: "low",
+        preservedIntent: "move button down by 8px",
+        safetyFlags: [],
+      },
+      {
+        rewrittenPrompt: "Please move the button lower by 8px.",
+        preservedIntent: "move button down by 8px",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({ valid: true, issues: [] })
+  })
+
+  test("default validator allows quoted toxic content when preserved as data", async () => {
+    const result = await validateWithDefaultValidator(
+      {
+        prompt: 'In tests/fixtures/messages.txt, preserve the quoted text "you idiot" exactly.',
+        host: "opencode",
+        mode: "replace",
+      },
+      {
+        shouldRewrite: true,
+        confidence: 0.9,
+        risk: "low",
+        preservedIntent: "preserve quoted fixture text exactly",
+        safetyFlags: ["quoted-toxic-content"],
+      },
+      {
+        rewrittenPrompt:
+          'Please preserve the quoted fixture text "you idiot" exactly in tests/fixtures/messages.txt.',
+        preservedIntent: "preserve quoted fixture text exactly",
+        uncertainty: [],
+      },
+    )
+
+    expect(result).toEqual({ valid: true, issues: [] })
   })
 
   test("runs a rewrite pipeline using host-supplied Effect services", async () => {

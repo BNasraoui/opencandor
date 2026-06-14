@@ -288,6 +288,127 @@ const patternMatches = (pattern: RegExp, prompt: string): boolean => {
   return matches
 }
 
+const unique = (items: readonly string[]): readonly string[] => [...new Set(items)]
+
+const extractMatches = (pattern: RegExp, prompt: string): readonly string[] => {
+  pattern.lastIndex = 0
+  const matches = Array.from(prompt.matchAll(pattern)).flatMap((match) =>
+    match[1] === undefined ? [] : [match[1]],
+  )
+  pattern.lastIndex = 0
+  return unique(matches)
+}
+
+const normalizeForComparison = (value: string): string => value.toLowerCase().replace(/[`"']/g, "")
+
+const containsNormalized = (haystack: string, needle: string): boolean =>
+  normalizeForComparison(haystack).includes(normalizeForComparison(needle))
+
+const pathPattern =
+  /(?:^|\s)((?:(?:\.?\.?\/|\/)?[\w-]+(?:\.[\w-]+)*)(?:\/[\w-]+(?:\.[\w-]+)*)+)(?=$|\s|[.,;:!?])/g
+const commandPattern = /`([^`]+)`/g
+const doubleQuotedTextPattern = /"([^"]+)"/g
+const singleQuotedTextPattern = /'([^']+)'/g
+const urgencyPattern = /\b(?:production|prod|outage|right now|immediately|urgent|asap)\b/i
+const unsafeIntentPatterns = [
+  /\brm\s+-rf\s+\/(?:\s|$)/i,
+  /\bdelete\s+everything\b/i,
+  /\b(?:exfiltrate|steal)\b/i,
+  /\b(?:hide|bypass|evade)\b.{0,80}\b(?:review|safety|security|detection|approval)\b/i,
+]
+const intentStopWords = new Set(["and", "the", "this", "that", "with", "from", "while"])
+
+const extractQuotedText = (prompt: string): readonly string[] =>
+  unique([
+    ...extractMatches(doubleQuotedTextPattern, prompt),
+    ...extractMatches(singleQuotedTextPattern, prompt),
+  ])
+
+const hasIntentMismatch = (preservedIntent: string, rewrittenPrompt: string): boolean => {
+  const intentTerms = unique(
+    preservedIntent
+      .toLowerCase()
+      .match(/\b[a-z0-9-]{4,}\b/g)
+      ?.filter((term) => !intentStopWords.has(term)) ?? [],
+  )
+
+  if (intentTerms.length === 0) {
+    return false
+  }
+
+  const rewritten = normalizeForComparison(rewrittenPrompt)
+  const preservedTermCount = intentTerms.filter((term) => rewritten.includes(term)).length
+  return preservedTermCount / intentTerms.length < 0.6
+}
+
+export const createDefaultSafety = (): Safety => ({
+  assess: (request, _classification, draft) =>
+    Effect.sync(() => {
+      const combined = `${request.prompt}\n${draft.rewrittenPrompt}`
+
+      if (unsafeIntentPatterns.some((pattern) => patternMatches(pattern, combined))) {
+        return {
+          allowed: false,
+          flags: ["unsafe-raw-intent"],
+          reason: "raw prompt or rewrite contains unsafe intent",
+        } satisfies SafetyAssessment
+      }
+
+      return { allowed: true, flags: [], reason: "safe" } satisfies SafetyAssessment
+    }),
+})
+
+export interface DefaultValidatorOptions {
+  readonly minimumConfidence?: number
+}
+
+export const createDefaultValidator = (options: DefaultValidatorOptions = {}): Validator => {
+  const minimumConfidence = options.minimumConfidence ?? 0.6
+
+  return {
+    validate: (request, classification, draft, safety) =>
+      Effect.sync(() => {
+        const issues: string[] = []
+
+        if (!safety.allowed) {
+          issues.push(...safety.flags)
+        }
+
+        if (classification.confidence < minimumConfidence) {
+          issues.push("low-confidence")
+        }
+
+        for (const path of extractMatches(pathPattern, request.prompt)) {
+          if (!containsNormalized(draft.rewrittenPrompt, path)) {
+            issues.push(`dropped-path:${path}`)
+          }
+        }
+
+        for (const command of extractMatches(commandPattern, request.prompt)) {
+          if (!containsNormalized(draft.rewrittenPrompt, command)) {
+            issues.push(`dropped-command:${command}`)
+          }
+        }
+
+        for (const quotedText of extractQuotedText(request.prompt)) {
+          if (!containsNormalized(draft.rewrittenPrompt, quotedText)) {
+            issues.push(`dropped-quoted-text:${quotedText}`)
+          }
+        }
+
+        if (urgencyPattern.test(request.prompt) && !urgencyPattern.test(draft.rewrittenPrompt)) {
+          issues.push("dropped-urgency")
+        }
+
+        if (hasIntentMismatch(classification.preservedIntent, draft.rewrittenPrompt)) {
+          issues.push("intent-mismatch")
+        }
+
+        return { valid: issues.length === 0, issues: unique(issues) } satisfies ValidationResult
+      }),
+  }
+}
+
 export const createCheapDetector = (options: CheapDetectorOptions = {}): Detector => {
   const signalPatterns = [
     ...(options.signalPatterns ?? defaultCheapDetectorSignals),
