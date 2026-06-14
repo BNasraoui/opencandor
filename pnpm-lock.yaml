@@ -47,6 +47,9 @@ importers:
       '@opencandor/core':
         specifier: workspace:*
         version: link:../core
+      effect:
+        specifier: ^3.21.3
+        version: 3.21.3
 
   packages/opencode-plugin:
     dependencies:

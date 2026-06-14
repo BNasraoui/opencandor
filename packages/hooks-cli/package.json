@@ -22,6 +22,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@opencandor/core": "workspace:*"
+    "@opencandor/core": "workspace:*",
+    "effect": "^3.21.3"
   }
 }
