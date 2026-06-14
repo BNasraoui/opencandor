@@ -9,12 +9,16 @@ import {
   SafetyService,
   ValidatorService,
   createCheapDetector,
+  createDefaultOpenCandorConfig,
   createDefaultSafety,
   createDefaultValidator,
   createPipelineService,
   failSafePromptRewriteModelOutput,
+  openCandorConfigSchema,
+  parseOpenCandorConfig,
   parsePromptRewriteModelOutput,
   promptRewriteModelOutputSchema,
+  validateHostMode,
   type Classification,
   type PromptRewriteRequest,
   type RewriteDraft,
@@ -93,6 +97,83 @@ const validateWithDefaultValidator = (
 ) => Effect.runPromise(createDefaultValidator().validate(input, classification, draft, assessment))
 
 describe("core contracts", () => {
+  test("defines the user-facing config schema", () => {
+    expect(openCandorConfigSchema).toMatchObject({
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        classifierModel: { type: "string", minLength: 1 },
+        rewriterModel: { type: "string", minLength: 1 },
+        mode: { enum: ["replace", "context", "block", "suggest", "dry-run"] },
+        minimumConfidence: { type: "number", minimum: 0, maximum: 1 },
+        diffDisplay: { enum: ["none", "summary", "unified"] },
+        logRawPrompts: { type: "boolean", default: false },
+        storeRawPrompts: { type: "boolean", default: false },
+      },
+    })
+  })
+
+  test("defines privacy-preserving config defaults", () => {
+    expect(createDefaultOpenCandorConfig()).toEqual({
+      classifierModel: "host/default",
+      rewriterModel: "host/default",
+      mode: "suggest",
+      minimumConfidence: 0.6,
+      diffDisplay: "summary",
+      logRawPrompts: false,
+      storeRawPrompts: false,
+    })
+  })
+
+  test("parses user config overrides for all runtime modes", () => {
+    for (const mode of ["replace", "context", "block", "suggest", "dry-run"] as const) {
+      expect(
+        parseOpenCandorConfig({
+          classifierModel: "github-copilot/gpt-5.1-mini",
+          rewriterModel: "github-copilot/gpt-5.1",
+          mode,
+          minimumConfidence: 0.72,
+          diffDisplay: "unified",
+        }),
+      ).toMatchObject({
+        classifierModel: "github-copilot/gpt-5.1-mini",
+        rewriterModel: "github-copilot/gpt-5.1",
+        mode,
+        minimumConfidence: 0.72,
+        diffDisplay: "unified",
+        logRawPrompts: false,
+        storeRawPrompts: false,
+      })
+    }
+  })
+
+  test("rejects unsupported host modes with a clear message", () => {
+    expect(() => validateHostMode({ host: "claude-code", mode: "replace" })).toThrow(
+      "Mode replace is not supported for host claude-code. Supported modes: context, block, suggest, dry-run.",
+    )
+  })
+
+  test("applies host mode validation while parsing config", () => {
+    expect(() => parseOpenCandorConfig({ mode: "replace" }, { host: "codex" })).toThrow(
+      "Mode replace is not supported for host codex. Supported modes: context, block, suggest, dry-run.",
+    )
+  })
+
+  test("rejects invalid config values", () => {
+    expect(() => parseOpenCandorConfig({ mode: "auto" })).toThrow(
+      "Invalid OpenCandor config: mode must be one of replace, context, block, suggest, dry-run",
+    )
+    expect(() => parseOpenCandorConfig({ minimumConfidence: 2 })).toThrow(
+      "Invalid OpenCandor config: minimumConfidence must be a number between 0 and 1",
+    )
+    expect(() => parseOpenCandorConfig({ extra: true })).toThrow(
+      "Invalid OpenCandor config: unknown option extra",
+    )
+    expect(() => validateHostMode({ host: "unknown-host", mode: "replace" })).toThrow(
+      "Mode replace is not supported for host unknown-host. Supported modes: context, block, suggest, dry-run.",
+    )
+  })
+
   test("defines the structured rewrite model output schema", () => {
     expect(promptRewriteModelOutputSchema).toMatchObject({
       type: "object",

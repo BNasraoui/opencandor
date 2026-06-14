@@ -4,6 +4,8 @@ export type HostRuntime = "opencode" | "claude-code" | "codex" | (string & {})
 
 export type RewriteMode = "replace" | "context" | "block" | "suggest" | "dry-run"
 
+export type DiffDisplay = "none" | "summary" | "unified"
+
 export type RiskLevel = "low" | "medium" | "high"
 
 export interface PromptRewriteRequest {
@@ -11,6 +13,151 @@ export interface PromptRewriteRequest {
   readonly host: HostRuntime
   readonly mode: RewriteMode
   readonly metadata?: Readonly<Record<string, string>>
+}
+
+export interface OpenCandorConfig {
+  readonly classifierModel: string
+  readonly rewriterModel: string
+  readonly mode: RewriteMode
+  readonly minimumConfidence: number
+  readonly diffDisplay: DiffDisplay
+  readonly logRawPrompts: boolean
+  readonly storeRawPrompts: boolean
+}
+
+export const rewriteModes = ["replace", "context", "block", "suggest", "dry-run"] as const
+
+export const diffDisplays = ["none", "summary", "unified"] as const
+
+export const openCandorConfigSchema = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    classifierModel: { type: "string", minLength: 1 },
+    rewriterModel: { type: "string", minLength: 1 },
+    mode: { enum: rewriteModes },
+    minimumConfidence: { type: "number", minimum: 0, maximum: 1 },
+    diffDisplay: { enum: diffDisplays },
+    logRawPrompts: { type: "boolean", default: false },
+    storeRawPrompts: { type: "boolean", default: false },
+  },
+} as const
+
+const defaultOpenCandorConfig: OpenCandorConfig = {
+  classifierModel: "host/default",
+  rewriterModel: "host/default",
+  mode: "suggest",
+  minimumConfidence: 0.6,
+  diffDisplay: "summary",
+  logRawPrompts: false,
+  storeRawPrompts: false,
+}
+
+const hostSupportedModes: Record<"opencode" | "claude-code" | "codex", readonly RewriteMode[]> = {
+  opencode: rewriteModes,
+  "claude-code": ["context", "block", "suggest", "dry-run"],
+  codex: ["context", "block", "suggest", "dry-run"],
+}
+
+const nonReplacementModes: readonly RewriteMode[] = ["context", "block", "suggest", "dry-run"]
+
+const openCandorConfigKeys = new Set(Object.keys(openCandorConfigSchema.properties))
+
+const isRewriteMode = (value: unknown): value is RewriteMode =>
+  rewriteModes.some((mode) => mode === value)
+
+const isDiffDisplay = (value: unknown): value is DiffDisplay =>
+  diffDisplays.some((display) => display === value)
+
+const isConfiguredHost = (host: HostRuntime): host is keyof typeof hostSupportedModes =>
+  host === "opencode" || host === "claude-code" || host === "codex"
+
+export const createDefaultOpenCandorConfig = (): OpenCandorConfig => defaultOpenCandorConfig
+
+export const parseOpenCandorConfig = (
+  value: unknown,
+  options: { readonly host?: HostRuntime } = {},
+): OpenCandorConfig => {
+  if (!isRecord(value)) {
+    if (options.host !== undefined) {
+      validateHostMode({ host: options.host, mode: defaultOpenCandorConfig.mode })
+    }
+
+    return defaultOpenCandorConfig
+  }
+
+  const issues: string[] = []
+  for (const key of Object.keys(value)) {
+    if (!openCandorConfigKeys.has(key)) {
+      issues.push(`unknown option ${key}`)
+    }
+  }
+
+  const classifierModel = value["classifierModel"] ?? defaultOpenCandorConfig.classifierModel
+  const rewriterModel = value["rewriterModel"] ?? defaultOpenCandorConfig.rewriterModel
+  const mode = value["mode"] ?? defaultOpenCandorConfig.mode
+  const minimumConfidence = value["minimumConfidence"] ?? defaultOpenCandorConfig.minimumConfidence
+  const diffDisplay = value["diffDisplay"] ?? defaultOpenCandorConfig.diffDisplay
+  const logRawPrompts = value["logRawPrompts"] ?? defaultOpenCandorConfig.logRawPrompts
+  const storeRawPrompts = value["storeRawPrompts"] ?? defaultOpenCandorConfig.storeRawPrompts
+
+  if (typeof classifierModel !== "string" || classifierModel.trim() === "") {
+    issues.push("classifierModel must be a non-empty string")
+  }
+  if (typeof rewriterModel !== "string" || rewriterModel.trim() === "") {
+    issues.push("rewriterModel must be a non-empty string")
+  }
+  if (!isRewriteMode(mode)) {
+    issues.push(`mode must be one of ${rewriteModes.join(", ")}`)
+  }
+  if (
+    typeof minimumConfidence !== "number" ||
+    !Number.isFinite(minimumConfidence) ||
+    minimumConfidence < 0 ||
+    minimumConfidence > 1
+  ) {
+    issues.push("minimumConfidence must be a number between 0 and 1")
+  }
+  if (!isDiffDisplay(diffDisplay)) {
+    issues.push(`diffDisplay must be one of ${diffDisplays.join(", ")}`)
+  }
+  if (typeof logRawPrompts !== "boolean") {
+    issues.push("logRawPrompts must be a boolean")
+  }
+  if (typeof storeRawPrompts !== "boolean") {
+    issues.push("storeRawPrompts must be a boolean")
+  }
+  if (issues.length > 0) {
+    throw new Error(`Invalid OpenCandor config: ${issues.join("; ")}`)
+  }
+
+  validateHostMode({ host: options.host ?? "opencode", mode: mode as RewriteMode })
+
+  return {
+    classifierModel: classifierModel as string,
+    rewriterModel: rewriterModel as string,
+    mode: mode as RewriteMode,
+    minimumConfidence: minimumConfidence as number,
+    diffDisplay: diffDisplay as DiffDisplay,
+    logRawPrompts: logRawPrompts as boolean,
+    storeRawPrompts: storeRawPrompts as boolean,
+  }
+}
+
+export const validateHostMode = ({
+  host,
+  mode,
+}: {
+  readonly host: HostRuntime
+  readonly mode: RewriteMode
+}): void => {
+  const supportedModes = isConfiguredHost(host) ? hostSupportedModes[host] : nonReplacementModes
+
+  if (!supportedModes.includes(mode)) {
+    throw new Error(
+      `Mode ${mode} is not supported for host ${host}. Supported modes: ${supportedModes.join(", ")}.`,
+    )
+  }
 }
 
 export interface DetectionResult {
