@@ -1,4 +1,5 @@
 <!-- BEGIN PROVENANCE INTEGRATION v0.1.0 -->
+
 # Provenance Knowledge Graph
 
 > Run `statesman provenance prime` after context compaction or at the start of a new session.
@@ -61,12 +62,14 @@ When `--reason` lands, it will attach structured context to every write operatio
 ## Rules
 
 **Do:**
+
 - Check Provenance BEFORE starting research (avoid rediscovering known context)
 - Post findings as thread messages (durable, attributable, searchable)
 - Link new rules to requirements and resolutions (complete traceability)
 - Use `--json` when piping output to other tools or processing programmatically
 
 **Don't:**
+
 - Keep research findings only in local files (they vanish after the session)
 - Create rules without traceability to requirements and sources
 - Skip impact analysis before modifying source documents or requirements
@@ -84,6 +87,7 @@ Load skill: statesman-provenance
 <!-- END PROVENANCE INTEGRATION v0.1.0 -->
 
 <!-- BEGIN BEADS INTEGRATION -->
+
 ## Issue Tracking with bd (beads)
 
 **IMPORTANT**: This project uses **bd (beads)** for ALL issue tracking. Do NOT use markdown TODOs, task lists, or other tracking methods.
@@ -189,6 +193,7 @@ For more details, see README.md and docs/QUICKSTART.md.
 7. **Hand off** - Provide context for next session
 
 **CRITICAL RULES:**
+
 - Work is NOT complete until `git push` succeeds
 - NEVER stop before pushing - that leaves work stranded locally
 - NEVER say "ready to push when you are" - YOU must push

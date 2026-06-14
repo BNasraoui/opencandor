@@ -1,0 +1,32 @@
+{
+  "name": "opencandor",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.1",
+  "engines": {
+    "node": ">=22.13.0 <23 || >=24.0.0"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r --sort build",
+    "build:smoke": "node tests/build-smoke.mjs",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm build:smoke",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "eslint .",
+    "test": "node --test tests/*.test.mjs",
+    "typecheck": "pnpm -r --sort typecheck"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/node": "^22.19.1",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "prettier": "^3.7.4",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.48.1"
+  }
+}

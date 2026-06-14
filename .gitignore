@@ -6,3 +6,9 @@ statesman.local.toml
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+
+# Node / TypeScript
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
